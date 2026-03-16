@@ -591,141 +591,161 @@
   'use strict';
 
   /* ═══════════════════════════════════════════════════════════
-     MOCK DATABASE
-     Simula los datos que en producción vendrían de una API real
-     (OpenSky Network, AviationStack, etc.)
+     ▼▼▼  ÚNICA LÍNEA QUE TIENES QUE TOCAR  ▼▼▼
+     Pega aquí tu clave de RapidAPI / AeroDataBox
      ═══════════════════════════════════════════════════════════ */
-
-  // Helpers de tiempo relativo (para que los vuelos parezcan "en vivo")
-  const pad = n => String(n).padStart(2, '0');
-  const rel = (dh, dm) => {
-    const d = new Date();
-    d.setHours(d.getHours() + dh, d.getMinutes() + dm);
-    return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  };
-
-  const DB = {
-    'VY1002': {
-      flightNumber: 'VY1002',
-      airline:      'Vueling Airlines',
-      registration: 'EC-MYD',
-      aircraft:     'Airbus A320neo',
-      origin:       { code: 'BCN', name: 'Barcelona El Prat' },
-      destination:  { code: 'MAD', name: 'Madrid Barajas' },
-      schDep:  rel(-1, -30),  // salida programada: hace 90 min
-      actDep:  rel(-1, -13),  // salida real: hace 73 min (+17 min retraso)
-      chocks:  rel(-1, -13),  // calzos fuera = actDep
-      schArr:  rel(0,  -20),  // llegada programada: hace 20 min
-      estArr:  rel(0,  -3),   // llegada estimada: hace 3 min
-      status:  'EN RUTA',
-      delay:   17,
-      gate:    'B22',
-    },
-    'IB3456': {
-      flightNumber: 'IB3456',
-      airline:      'Iberia',
-      registration: 'EC-LVX',
-      aircraft:     'Airbus A321',
-      origin:       { code: 'MAD', name: 'Madrid Barajas' },
-      destination:  { code: 'LHR', name: 'London Heathrow' },
-      schDep:  rel(1, 10),
-      actDep:  null,
-      chocks:  null,
-      schArr:  rel(3, 20),
-      estArr:  rel(3, 20),
-      status:  'PROGRAMADO',
-      delay:   0,
-      gate:    'T4S-A06',
-    },
-    'VY6200': {
-      flightNumber: 'VY6200',
-      airline:      'Vueling Airlines',
-      registration: 'EC-NAJ',
-      aircraft:     'Airbus A319',
-      origin:       { code: 'MAD', name: 'Madrid Barajas' },
-      destination:  { code: 'BCN', name: 'Barcelona El Prat' },
-      schDep:  rel(-3, -55),
-      actDep:  rel(-3, -55),
-      chocks:  rel(-3, -55),
-      schArr:  rel(-2, -40),
-      estArr:  rel(-2, -40),
-      status:  'ATERRIZADO',
-      delay:   0,
-      gate:    'C14',
-    },
-    'U23456': {
-      flightNumber: 'U23456',
-      airline:      'easyJet',
-      registration: 'EC-MKL',
-      aircraft:     'Airbus A320',
-      origin:       { code: 'BCN', name: 'Barcelona El Prat' },
-      destination:  { code: 'CDG', name: 'Paris Charles de Gaulle' },
-      schDep:  rel(0, 25),
-      actDep:  null,
-      chocks:  null,
-      schArr:  rel(2, 15),
-      estArr:  rel(3, 0),
-      status:  'EMBARCANDO',
-      delay:   45,
-      gate:    'A08',
-    },
-    'VY6004': {
-      flightNumber: 'VY6004',
-      airline:      'Vueling Airlines',
-      registration: 'EC-MQK',
-      aircraft:     'Airbus A320',
-      origin:       { code: 'BCN', name: 'Barcelona El Prat' },
-      destination:  { code: 'LPA', name: 'Gran Canaria' },
-      schDep:  rel(2, 15),
-      actDep:  null,
-      chocks:  null,
-      schArr:  rel(5, 5),
-      estArr:  rel(5, 5),
-      status:  'PROGRAMADO',
-      delay:   0,
-      gate:    'D35',
-    },
-  };
-
-  // Índice de matrículas → número de vuelo
-  const REG = {};
-  Object.values(DB).forEach(f => { REG[f.registration.toUpperCase()] = f.flightNumber; });
+  const RAPIDAPI_KEY = '9e5dfb284cmshef4d1a47600a8d0p12dc6bjsn021406a3fdc7';
 
   /* ═══════════════════════════════════════════════════════════
-     BÚSQUEDA
+     TRADUCCIÓN DE ESTADOS (inglés API → español TRACKPIT)
      ═══════════════════════════════════════════════════════════ */
-  function buscar(q) {
-    const k = q.trim().toUpperCase().replace(/\s/g, '');
-    if (!k) return null;
-    if (DB[k]) return DB[k];
-    if (REG[k]) return DB[REG[k]];
-    // Búsqueda parcial (ej: "VY10" → "VY1002")
-    const found = Object.keys(DB).find(id => id.startsWith(k));
-    return found ? DB[found] : null;
+  const STATUS_MAP = {
+    'Expected':          'PROGRAMADO',
+    'EnRoute':           'EN RUTA',
+    'CheckIn':           'CHECK-IN',
+    'Boarding':          'EMBARCANDO',
+    'GateClosed':        'PUERTA CERRADA',
+    'Departed':          'EN RUTA',
+    'Landed':            'ATERRIZADO',
+    'Arrived':           'ATERRIZADO',
+    'Cancelled':         'CANCELADO',
+    'CanceledUncertain': 'CANCELADO',
+    'Diverted':          'DESVIADO',
+    'Unknown':           'DESCONOCIDO',
+  };
+
+  const BADGE_CLASS = {
+    'EN RUTA':        'b-route',
+    'ATERRIZADO':     'b-land',
+    'EMBARCANDO':     'b-board',
+    'CHECK-IN':       'b-board',
+    'PUERTA CERRADA': 'b-board',
+    'CANCELADO':      'b-cancel',
+    'DESVIADO':       'b-cancel',
+    'PROGRAMADO':     'b-sched',
+    'DESCONOCIDO':    'b-sched',
+  };
+
+  /* ═══════════════════════════════════════════════════════════
+     UTILIDADES DE TIEMPO
+     Convierte "2024-06-15 14:30+02:00" → "14:30"
+     ═══════════════════════════════════════════════════════════ */
+  function fmtLocal(isoLocal) {
+    if (!isoLocal) return '—';
+    // Formato AeroDataBox: "2024-06-15 14:30+02:00"
+    const m = isoLocal.match(/(\d{2}:\d{2})/);
+    return m ? m[1] : '—';
+  }
+
+  /* ═══════════════════════════════════════════════════════════
+     LLAMADA A LA API AERODATABOX
+     Detecta automáticamente si es matrícula (EC-MYD)
+     o número de vuelo (VY1002)
+     ═══════════════════════════════════════════════════════════ */
+  const IS_REG = /^[A-Z]{1,2}-[A-Z0-9]{2,5}$/;   // patrón matrícula: EC-MYD, G-EUUU...
+
+  async function fetchFlight(query) {
+    const q = query.trim().toUpperCase().replace(/\s/g, '');
+    const isReg = IS_REG.test(q);
+
+    // Endpoint diferente según sea matrícula o número de vuelo
+    const endpoint = isReg
+      ? `https://aerodatabox.p.rapidapi.com/flights/reg/${q}?withAircraftImage=false&withLocation=false`
+      : `https://aerodatabox.p.rapidapi.com/flights/number/${q}?withAircraftImage=false&withLocation=false`;
+
+    const response = await fetch(endpoint, {
+      method: 'GET',
+      headers: {
+        'X-RapidAPI-Key':  RAPIDAPI_KEY,
+        'X-RapidAPI-Host': 'aerodatabox.p.rapidapi.com',
+      },
+    });
+
+    if (response.status === 404) return null;         // vuelo no encontrado
+    if (response.status === 401) throw new Error('API_KEY');
+    if (!response.ok) throw new Error(`HTTP_${response.status}`);
+
+    const data = await response.json();
+
+    // La API devuelve un array; cogemos el vuelo más relevante
+    // (el que está en curso o el más próximo)
+    const flights = Array.isArray(data) ? data : (data.flights || []);
+    if (!flights.length) return null;
+
+    // Ordenamos: primero en ruta, luego embarcando, luego por hora de salida
+    const PRIORITY = ['EnRoute','Departed','Boarding','GateClosed','CheckIn','Expected','Landed','Arrived'];
+    flights.sort((a, b) => {
+      const pa = PRIORITY.indexOf(a.status);
+      const pb = PRIORITY.indexOf(b.status);
+      if (pa !== pb) return (pa === -1 ? 99 : pa) - (pb === -1 ? 99 : pb);
+      return 0;
+    });
+
+    return normalize(flights[0], q);
+  }
+
+  /* ═══════════════════════════════════════════════════════════
+     NORMALIZACIÓN
+     Convierte la respuesta cruda de AeroDataBox a nuestro
+     formato interno (el mismo que usaba el mock)
+     ═══════════════════════════════════════════════════════════ */
+  function normalize(f, originalQuery) {
+    const dep = f.departure || {};
+    const arr = f.arrival   || {};
+    const ac  = f.aircraft  || {};
+    const al  = f.airline   || {};
+
+    const schDep = fmtLocal(dep.scheduledTime?.local);
+    const actDep = fmtLocal(dep.actualTime?.local);
+    const schArr = fmtLocal(arr.scheduledTime?.local);
+    const estArr = fmtLocal(arr.estimatedTime?.local || arr.actualTime?.local);
+
+    const depDelay = dep.delay || 0;
+    const arrDelay = arr.delay || 0;
+    const delay    = depDelay || arrDelay || 0;
+
+    const statusRaw = f.status || 'Unknown';
+    const status    = STATUS_MAP[statusRaw] || statusRaw.toUpperCase();
+
+    // Puerta: intentamos salida, si no llegada
+    const gate = dep.gate || arr.gate || dep.terminal || arr.terminal || '—';
+
+    return {
+      flightNumber: f.number || originalQuery,
+      airline:      al.name  || '—',
+      registration: ac.reg   || '—',
+      aircraft:     ac.model || '—',
+      origin: {
+        code: dep.airport?.iata || dep.airport?.icao || '???',
+        name: dep.airport?.name || '—',
+      },
+      destination: {
+        code: arr.airport?.iata || arr.airport?.icao || '???',
+        name: arr.airport?.name || '—',
+      },
+      schDep,
+      actDep: actDep !== '—' ? actDep : null,
+      chocks:  actDep !== '—' ? actDep : null,
+      schArr,
+      estArr: estArr !== '—' ? estArr : schArr,
+      status,
+      delay,
+      gate,
+    };
   }
 
   /* ═══════════════════════════════════════════════════════════
      RENDERIZADO
      ═══════════════════════════════════════════════════════════ */
-  const BADGE_CLASS = {
-    'EN RUTA':    'b-route',
-    'ATERRIZADO': 'b-land',
-    'EMBARCANDO': 'b-board',
-    'CANCELADO':  'b-cancel',
-    'PROGRAMADO': 'b-sched',
-    'RETRASADO':  'b-delay',
-  };
-
   function renderFlight(f) {
-    const hasDelay  = f.delay > 0;
-    const depTime   = f.chocks || f.actDep || f.schDep;
-    const depLate   = !!(f.actDep && f.actDep !== f.schDep);
-    const arrLate   = !!(f.estArr && f.estArr !== f.schArr);
-    const ts        = new Date().toLocaleTimeString('es-ES', { hour:'2-digit', minute:'2-digit' });
+    const hasDelay = f.delay > 0;
+    const depTime  = f.chocks || f.actDep || f.schDep;
+    const depLate  = !!(f.actDep && f.actDep !== f.schDep);
+    const arrLate  = !!(f.estArr && f.estArr !== f.schArr);
+    const ts       = new Date().toLocaleTimeString('es-ES', { hour:'2-digit', minute:'2-digit' });
 
     return `
     <div class="card">
-
       <div class="c-head">
         <div>
           <div class="c-fnum">${f.flightNumber}</div>
@@ -768,14 +788,14 @@
           <div class="t-lbl">⬆ Calzos · Salida real</div>
           <div class="t-val ${depLate || hasDelay ? 'late' : 'ok'}">${depTime}</div>
           <div class="t-note ${depLate ? 'late' : ''}">
-            ${f.schDep !== depTime ? `Prog. ${f.schDep}` : 'En hora ✓'}
+            ${depTime !== f.schDep ? `Prog. ${f.schDep}` : 'En hora ✓'}
           </div>
         </div>
         <div class="t-block">
           <div class="t-lbl">⬇ Llegada estimada</div>
           <div class="t-val ${arrLate ? 'late' : 'ok'}">${f.estArr}</div>
           <div class="t-note ${arrLate ? 'late' : ''}">
-            ${f.schArr !== f.estArr ? `Prog. ${f.schArr}` : 'En hora ✓'}
+            ${f.estArr !== f.schArr ? `Prog. ${f.schArr}` : 'En hora ✓'}
           </div>
         </div>
       </div>
@@ -795,15 +815,28 @@
         </div>
         <div class="d-block">
           <div class="d-lbl">Fuente</div>
-          <div class="d-val dim">MOCK DATA v1</div>
+          <div class="d-val dim">AeroDataBox</div>
         </div>
       </div>
 
       <div class="c-foot">
-        <span class="c-src">▸ TRACKPIT v1.0</span>
+        <span class="c-src">▸ TRACKPIT v2.0</span>
         <span class="c-ts">Actualizado ${ts}</span>
       </div>
+    </div>`;
+  }
 
+  function renderLoading(q) {
+    return `
+    <div class="idle" style="padding:2rem 1rem">
+      <div class="radar">
+        <div class="radar-ring"></div>
+        <div class="radar-ring"></div>
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="#00aaff" opacity="0.5" aria-hidden="true">
+          <path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/>
+        </svg>
+      </div>
+      <div class="idle-msg">Buscando <strong style="color:var(--blue)">${q.toUpperCase()}</strong>…</div>
     </div>`;
   }
 
@@ -818,14 +851,13 @@
         </svg>
       </div>
       <div class="idle-msg">Introduce un vuelo<br>para comenzar el seguimiento</div>
-      <div class="chips-label">Vuelos de ejemplo</div>
+      <div class="chips-label">Prueba con vuelos reales</div>
       <div class="chips">
-        <button class="chip" onclick="tryFlight('VY1002')">VY1002</button>
+        <button class="chip" onclick="tryFlight('VY1234')">VY1234</button>
         <button class="chip" onclick="tryFlight('IB3456')">IB3456</button>
         <button class="chip" onclick="tryFlight('VY6200')">VY6200</button>
-        <button class="chip" onclick="tryFlight('U23456')">U23456</button>
-        <button class="chip" onclick="tryFlight('EC-MYD')">EC-MYD</button>
-        <button class="chip" onclick="tryFlight('VY6004')">VY6004</button>
+        <button class="chip" onclick="tryFlight('FR1234')">FR1234</button>
+        <button class="chip" onclick="tryFlight('U21234')">U21234</button>
       </div>
     </div>`;
   }
@@ -840,7 +872,23 @@
         <line x1="13.5" y1="8.5" x2="8.5" y2="13.5" stroke-width="2"/>
       </svg>
       <div class="nf-title">Vuelo no encontrado</div>
-      <div class="nf-sub">"${q.toUpperCase()}" no está en la base de datos.<br>Comprueba el número de vuelo o matrícula.</div>
+      <div class="nf-sub">"${q.toUpperCase()}" no figura en los datos de hoy.<br>Comprueba el número o prueba con la matrícula.</div>
+    </div>`;
+  }
+
+  function renderError(type) {
+    const msg = type === 'API_KEY'
+      ? 'Clave de API no válida.<br>Revisa el archivo index.html.'
+      : 'Error de red. Comprueba tu conexión<br>e inténtalo de nuevo.';
+    return `
+    <div class="nf">
+      <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="1.3" opacity="0.5" aria-hidden="true">
+        <circle cx="12" cy="12" r="10"/>
+        <line x1="12" y1="8" x2="12" y2="13" stroke-width="2"/>
+        <circle cx="12" cy="16.5" r="0.7" fill="var(--red)"/>
+      </svg>
+      <div class="nf-title" style="color:var(--red)">Error de conexión</div>
+      <div class="nf-sub">${msg}</div>
     </div>`;
   }
 
@@ -856,24 +904,30 @@
 
   function triggerScan() {
     scanEl.classList.remove('go');
-    void scanEl.offsetWidth;          // fuerza reflow para reiniciar animación
+    void scanEl.offsetWidth;
     scanEl.classList.add('go');
   }
 
-  function doSearch(q) {
+  async function doSearch(q) {
     if (!q.trim()) { results.innerHTML = renderIdle(); return; }
     triggerScan();
-    const flight = buscar(q);
-    results.innerHTML = flight ? renderFlight(flight) : renderNotFound(q);
+    results.innerHTML = renderLoading(q);
+    try {
+      const flight = await fetchFlight(q);
+      results.innerHTML = flight ? renderFlight(flight) : renderNotFound(q);
+    } catch (err) {
+      results.innerHTML = renderError(err.message);
+    }
   }
 
-  // Búsqueda mientras escribe (debounced 350ms)
+  // Búsqueda mientras escribe (debounced 600ms — la API es red, no local)
   inp.addEventListener('input', () => {
     const v = inp.value;
     btnClear.classList.toggle('on', v.length > 0);
     clearTimeout(timer);
     if (v.length === 0) { results.innerHTML = renderIdle(); return; }
-    if (v.length >= 3)  { timer = setTimeout(() => doSearch(v), 350); }
+    // Esperamos al menos 5 caracteres para no gastar llamadas API
+    if (v.length >= 5) { timer = setTimeout(() => doSearch(v), 600); }
   });
 
   // Enter confirma búsqueda inmediata
@@ -900,7 +954,6 @@
     doSearch(code);
     results.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
-  // Exponer tryFlight al scope global (lo llaman los botones inline)
   window.tryFlight = tryFlight;
 
   // Estado inicial
@@ -945,7 +998,7 @@
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
       navigator.serviceWorker.register('./sw.js')
-        .catch(() => {}); // falla silenciosamente si se abre como file://
+        .catch(() => {});
     });
   }
   </script>
